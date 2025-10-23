@@ -68,3 +68,33 @@ func PostPalpite(w http.ResponseWriter, r *http.Request) {
 		"message": "Palpite criado com sucesso",
 	})
 }
+
+func GetPalpites(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		sendErrorResponse(w, "Método não permitido", http.StatusMethodNotAllowed)
+		return
+	}
+	rows, err := database.DB.Query(`
+		SELECT id, user_id, titulo, img_url, link, created_at, updated_at
+		FROM palpites
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		sendErrorResponse(w, "Erro ao buscar palpites: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	var palpites []models.PalpiteResponse
+	for rows.Next() {
+		var p models.Palpite
+		err := rows.Scan(&p.ID, &p.UserID, &p.Titulo, &p.ImgURL, &p.Link, &p.CreatedAt, &p.UpdatedAt)
+		if err != nil {
+			sendErrorResponse(w, "Erro ao ler palpite: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		palpites = append(palpites, p.ToResponse())
+	}
+	sendSuccessResponse(w, map[string]interface{}{
+		"palpites": palpites,
+	})
+}
