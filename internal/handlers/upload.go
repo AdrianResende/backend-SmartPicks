@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -17,7 +18,7 @@ func UploadImageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const maxUploadSize = 5 << 20 // 5MB
+	const maxUploadSize = 5 << 20
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 
 	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
@@ -32,15 +33,11 @@ func UploadImageHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Validar tipo e extensão
 	buffer := make([]byte, 512)
-	_, err = file.Read(buffer)
-	if err != nil {
+	if _, err := file.Read(buffer); err != nil {
 		sendErrorResponse(w, "Erro ao ler arquivo", http.StatusBadRequest)
 		return
 	}
-	file.Seek(0, 0)
-
 	contentType := http.DetectContentType(buffer)
 	allowedTypes := map[string]bool{
 		"image/jpeg": true,
@@ -66,11 +63,14 @@ func UploadImageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Nome único do arquivo
 	timestamp := time.Now().UnixNano()
 	newFileName := fmt.Sprintf("palpite_%d%s", timestamp, ext)
 
-	// Upload para S3
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		sendErrorResponse(w, "Erro ao reposicionar arquivo: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	s3Service, err := services.NewS3Service()
 	if err != nil {
 		sendErrorResponse(w, "Erro ao configurar AWS S3: "+err.Error(), http.StatusInternalServerError)
@@ -83,12 +83,13 @@ func UploadImageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resposta com a URL pública do S3
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	response := map[string]interface{}{
 		"success":   true,
 		"image_url": imageURL,
 		"message":   "Upload realizado com sucesso para o S3",
-	})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
 }

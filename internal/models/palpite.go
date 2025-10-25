@@ -7,16 +7,10 @@ type Palpite struct {
 	UserID    int       `json:"user_id"`
 	Titulo    *string   `json:"titulo,omitempty"`
 	ImgURL    string    `json:"img_url"`
+	Avatar    *string   `json:"avatar,omitempty"`
 	Link      *string   `json:"link,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-}
-
-type CreatePalpiteRequest struct {
-	UserID int     `json:"user_id" binding:"required"`
-	Titulo *string `json:"titulo,omitempty"`
-	ImgURL string  `json:"img_url" binding:"required"`
-	Link   *string `json:"link,omitempty"`
 }
 
 type PalpiteResponse struct {
@@ -24,14 +18,10 @@ type PalpiteResponse struct {
 	UserID    int       `json:"user_id"`
 	Titulo    *string   `json:"titulo,omitempty"`
 	ImgURL    string    `json:"img_url"`
+	Avatar    *string   `json:"avatar,omitempty"`
 	Link      *string   `json:"link,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-}
-
-type UploadResponse struct {
-	ImageURL string `json:"image_url"`
-	Message  string `json:"message"`
 }
 
 func (p *Palpite) ToResponse() PalpiteResponse {
@@ -40,20 +30,9 @@ func (p *Palpite) ToResponse() PalpiteResponse {
 		UserID:    p.UserID,
 		Titulo:    p.Titulo,
 		ImgURL:    p.ImgURL,
+		Avatar:    p.Avatar,
 		Link:      p.Link,
 		CreatedAt: p.CreatedAt,
 		UpdatedAt: p.UpdatedAt,
-	}
-}
-
-func (req *CreatePalpiteRequest) ToPalpite() Palpite {
-	now := time.Now()
-	return Palpite{
-		UserID:    req.UserID,
-		Titulo:    req.Titulo,
-		ImgURL:    req.ImgURL,
-		Link:      req.Link,
-		CreatedAt: now,
-		UpdatedAt: now,
 	}
 }

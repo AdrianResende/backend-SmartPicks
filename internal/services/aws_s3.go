@@ -27,12 +27,16 @@ func NewS3Service() (*S3Service, error) {
 		return nil, fmt.Errorf("AWS_REGION ou AWS_BUCKET_NAME não definidos")
 	}
 
-	cfg, err := config.LoadDefaultConfig(context.TODO())
+	cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(region))
 	if err != nil {
 		return nil, err
 	}
 
-	client := s3.NewFromConfig(cfg)
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.Region = region
+		// Endpoint regional explícito
+		o.EndpointResolver = s3.EndpointResolverFromURL(fmt.Sprintf("https://s3.%s.amazonaws.com", region))
+	})
 
 	return &S3Service{
 		Client:     client,
@@ -43,8 +47,7 @@ func NewS3Service() (*S3Service, error) {
 
 func (s *S3Service) UploadFile(file multipart.File, fileName string, contentType string) (string, error) {
 	buf := new(bytes.Buffer)
-	_, err := io.Copy(buf, file)
-	if err != nil {
+	if _, err := io.Copy(buf, file); err != nil {
 		return "", err
 	}
 
@@ -55,11 +58,12 @@ func (s *S3Service) UploadFile(file multipart.File, fileName string, contentType
 		ContentType: aws.String(contentType),
 	}
 
-	_, err = s.Client.PutObject(context.TODO(), input)
+	_, err := s.Client.PutObject(context.TODO(), input)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("erro ao enviar para S3: %v", err)
 	}
 
+	// 🔹 URL correta (baseada na região)
 	url := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", s.BucketName, s.Region, fileName)
 	return url, nil
 }

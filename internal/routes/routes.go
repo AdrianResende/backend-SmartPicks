@@ -46,10 +46,12 @@ func RegisterRoutes(r *mux.Router) {
 	api.HandleFunc("/users/profile", handlers.GetUsersByProfile).Methods("GET", "OPTIONS")
 	api.HandleFunc("/users/avatar", handlers.UpdateAvatar).Methods("POST", "PUT", "OPTIONS")
 	api.HandleFunc("/users/avatar", handlers.DeleteAvatar).Methods("DELETE", "OPTIONS")
+	api.HandleFunc("/users/{id}", handlers.GetUserByID).Methods("GET", "OPTIONS")
+	api.HandleFunc("/matches", handlers.GetAllMatches).Methods("GET", "OPTIONS")
+	api.HandleFunc("/palpites", handlers.GetPalpites).Methods("GET", "OPTIONS")
 	api.HandleFunc("/palpites", handlers.PostPalpite).Methods("POST", "OPTIONS")
 	api.HandleFunc("/upload", handlers.UploadImageHandler).Methods("POST", "OPTIONS")
 
-	// Rotas públicas
 	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status": "API rodando", "version": "1.0.0"}`))

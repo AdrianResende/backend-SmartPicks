@@ -43,6 +43,27 @@ func GetAllUsers(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func GetUserByID(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		sendErrorResponse(w, "ID do usuário é obrigatório", http.StatusBadRequest)
+		return
+	}
+	var user models.User
+	err := database.DB.QueryRow(`
+		SELECT id, nome, email, cpf,
+			   TO_CHAR(data_nascimento, 'YYYY-MM-DD') as data_nascimento,
+			   perfil, COALESCE(avatar, '') as avatar, created_at, updated_at 
+		FROM users WHERE id = $1`, id).
+		Scan(&user.ID, &user.Nome, &user.Email, &user.CPF,
+			&user.DataNascimento, &user.Perfil, &user.Avatar, &user.CreatedAt, &user.UpdatedAt)
+	if err != nil {
+		sendErrorResponse(w, "Usuário não encontrado", http.StatusNotFound)
+		return
+	}
+	sendSuccessResponse(w, user.ToResponse())
+}
+
 func CheckUserPermissions(w http.ResponseWriter, r *http.Request) {
 
 	email := r.URL.Query().Get("email")
