@@ -12,13 +12,6 @@ import (
 	"time"
 )
 
-// GetPalpites @Summary Listar palpites
-// @Description Retorna a lista de palpites com URL completa das imagens
-// @Tags Palpites
-// @Produce json
-// @Success 200 {object} map[string]interface{} "Lista de palpites"
-// @Failure 500 {object} map[string]string "Erro interno do servidor"
-// @Router /palpites [get]
 func GetPalpites(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		sendErrorResponse(w, "Método não permitido", http.StatusMethodNotAllowed)
@@ -26,9 +19,18 @@ func GetPalpites(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := database.DB.Query(`
-		SELECT id, user_id, titulo, img_url, link, created_at, updated_at
-		FROM palpites
-		ORDER BY created_at DESC
+		SELECT 
+			p.id, 
+			p.user_id, 
+			p.titulo, 
+			p.img_url, 
+			p.link, 
+			p.created_at, 
+			p.updated_at,
+			u.avatar
+		FROM palpites p
+		JOIN users u ON u.id = p.user_id
+		ORDER BY p.created_at DESC
 	`)
 	if err != nil {
 		sendErrorResponse(w, "Erro ao buscar palpites: "+err.Error(), http.StatusInternalServerError)
@@ -39,19 +41,24 @@ func GetPalpites(w http.ResponseWriter, r *http.Request) {
 	var palpites []models.PalpiteResponse
 	for rows.Next() {
 		var p models.Palpite
-		if err := rows.Scan(&p.ID, &p.UserID, &p.Titulo, &p.ImgURL, &p.Link, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		var avatar *string
+
+		if err := rows.Scan(
+			&p.ID, &p.UserID, &p.Titulo, &p.ImgURL, &p.Link, &p.CreatedAt, &p.UpdatedAt,
+			&avatar,
+		); err != nil {
 			sendErrorResponse(w, "Erro ao ler palpite: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		// 🔹 Garantir URL completa S3
 		if !strings.HasPrefix(p.ImgURL, "http") {
 			bucketName := os.Getenv("AWS_BUCKET_NAME")
 			region := os.Getenv("AWS_REGION")
-			// Remove possível barra inicial
 			trimmedKey := strings.TrimPrefix(p.ImgURL, "/")
 			p.ImgURL = fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucketName, region, trimmedKey)
 		}
+
+		p.Avatar = avatar
 
 		palpites = append(palpites, p.ToResponse())
 	}
@@ -61,18 +68,33 @@ func GetPalpites(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// PostPalpite @Summary Criar um novo palpite
+// @Description Cria um novo palpite com upload para o S3
+// @Tags Palpites
+// @Accept multipart/form-data
+// @Produce json
+// @Param user_id formData int true "ID do usuário"
+// @Param titulo formData string false "Título do palpite"
+// @Param link formData string false "Link do palpite"
+// @Param image formData file true "Imagem do palpite"
+// @Success 201 {object} map[string]interface{} "Palpite criado com sucesso"
+// @Failure 400 {object} map[string]string "Dados inválidos"
+// @Failure 500 {object} map[string]string "Erro interno do servidor"
+// @Router /palpites [post]
 func PostPalpite(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		sendErrorResponse(w, "Método não permitido", http.StatusMethodNotAllowed)
 		return
 	}
+
 	contentType := r.Header.Get("Content-Type")
 	if !strings.HasPrefix(contentType, "multipart/form-data") {
 		sendErrorResponse(w, fmt.Sprintf("Content-Type inválido: %s, esperado multipart/form-data", contentType), http.StatusBadRequest)
 		return
 	}
 
-	if err := r.ParseMultipartForm(20 << 20); err != nil { // 20MB
+	// Removemos o limitador de 20MB
+	if err := r.ParseMultipartForm(0); err != nil {
 		sendErrorResponse(w, "Erro ao processar multipart form: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -121,7 +143,8 @@ func PostPalpite(w http.ResponseWriter, r *http.Request) {
 	err = database.DB.QueryRow(`
 		INSERT INTO palpites (user_id, titulo, img_url, link, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id`,
+		RETURNING id
+	`,
 		palpite.UserID, palpite.Titulo, palpite.ImgURL, palpite.Link,
 		palpite.CreatedAt, palpite.UpdatedAt,
 	).Scan(&palpite.ID)
