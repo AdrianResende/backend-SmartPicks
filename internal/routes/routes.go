@@ -21,7 +21,7 @@ func enableCORS(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Origin, Accept")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Origin, Accept, X-User-ID")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -48,8 +48,21 @@ func RegisterRoutes(r *mux.Router) {
 	api.HandleFunc("/users/avatar", handlers.DeleteAvatar).Methods("DELETE", "OPTIONS")
 	api.HandleFunc("/users/{id}", handlers.GetUserByID).Methods("GET", "OPTIONS")
 	api.HandleFunc("/matches", handlers.GetAllMatches).Methods("GET", "OPTIONS")
+
+	// Rotas de palpites (rotas específicas ANTES das genéricas)
+	api.HandleFunc("/palpites/stats", handlers.GetAllPalpitesWithStats).Methods("GET", "OPTIONS")
+	api.HandleFunc("/palpites/{id}/stats", handlers.GetPalpiteStats).Methods("GET", "OPTIONS")
+	api.HandleFunc("/palpites/{id}/react", handlers.TogglePalpiteReaction).Methods("POST", "OPTIONS")
+	api.HandleFunc("/palpites/{id}/comentarios", handlers.GetComentariosByPalpite).Methods("GET", "OPTIONS")
 	api.HandleFunc("/palpites", handlers.GetPalpites).Methods("GET", "OPTIONS")
 	api.HandleFunc("/palpites", handlers.PostPalpite).Methods("POST", "OPTIONS")
+
+	// Rotas de comentários
+	api.HandleFunc("/comentarios/{id}/react", handlers.ToggleComentarioReaction).Methods("POST", "OPTIONS")
+	api.HandleFunc("/comentarios/{id}", handlers.UpdateComentario).Methods("PUT", "OPTIONS")
+	api.HandleFunc("/comentarios/{id}", handlers.DeleteComentario).Methods("DELETE", "OPTIONS")
+	api.HandleFunc("/comentarios", handlers.CreateComentario).Methods("POST", "OPTIONS")
+
 	api.HandleFunc("/upload", handlers.UploadImageHandler).Methods("POST", "OPTIONS")
 
 	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
