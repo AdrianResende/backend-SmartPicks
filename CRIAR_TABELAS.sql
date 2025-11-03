@@ -1,25 +1,13 @@
-﻿-- PostgreSQL Schema para SmartPicks
--- Execute este script no seu banco PostgreSQL (Neon)
+-- =====================================================
+-- SCRIPT DE CRIAÇÃO DAS TABELAS - SmartPicks
+-- Execute este script no pgAdmin ou qualquer cliente PostgreSQL
+-- Banco de dados: smartpicks
+-- =====================================================
 
-CREATE TABLE IF NOT EXISTS users (
-    id SERIAL PRIMARY KEY,
-    nome VARCHAR(255) NOT NULL,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    password VARCHAR(255) NOT NULL,
-    cpf VARCHAR(14) UNIQUE NOT NULL,
-    data_nascimento DATE NOT NULL,
-    perfil VARCHAR(20) NOT NULL DEFAULT 'user' CHECK (perfil IN ('admin', 'user')),
-    avatar TEXT NULL DEFAULT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
+-- =====================================================
+-- PASSO 1: Criar a função de update_updated_at (se não existir)
+-- =====================================================
 
--- Criar índices
-CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
-CREATE INDEX IF NOT EXISTS idx_users_cpf ON users (cpf);
-CREATE INDEX IF NOT EXISTS idx_users_perfil ON users (perfil);
-
--- Trigger para updated_at
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -28,47 +16,14 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
-DROP TRIGGER IF EXISTS update_users_updated_at ON users;
-CREATE TRIGGER update_users_updated_at
-    BEFORE UPDATE ON users
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-
--- Inserir usuários padrão (se não existirem)
-INSERT INTO users (nome, email, password, cpf, data_nascimento, perfil, avatar) VALUES
-(
-    'Admin User',
-    'admin@smartpicks.com',
-    '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi',
-    '00000000000',
-    '1990-01-01',
-    'admin',
-    'https://ui-avatars.com/api/?name=Admin+User&background=0d8abc&color=fff'
-),
-(
-    'User Comum',
-    'user@smartpicks.com',
-    '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi',
-    '11111111111',
-    '1995-06-15',
-    'user',
-    'https://ui-avatars.com/api/?name=User+Comum&background=28a745&color=fff'
-)
-ON CONFLICT (email) DO UPDATE SET
-    nome = EXCLUDED.nome,
-    avatar = EXCLUDED.avatar;
-
--- Verificar dados
-SELECT id, nome, email, perfil, avatar, created_at FROM users;
-
 -- =====================================================
--- TABELA DE PALPITES
+-- PASSO 2: Criar tabela PALPITES
 -- =====================================================
 
 CREATE TABLE IF NOT EXISTS palpites (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL,
-    titulo VARCHAR(255) NOT NULL,
+    titulo VARCHAR(255),
     img_url TEXT,
     link TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -93,7 +48,7 @@ CREATE TRIGGER update_palpites_updated_at
     EXECUTE FUNCTION update_updated_at_column();
 
 -- =====================================================
--- TABELA DE COMENTÁRIOS
+-- PASSO 3: Criar tabela COMENTÁRIOS
 -- =====================================================
 
 CREATE TABLE IF NOT EXISTS comentarios (
@@ -129,7 +84,7 @@ CREATE TRIGGER update_comentarios_updated_at
     EXECUTE FUNCTION update_updated_at_column();
 
 -- =====================================================
--- TABELA DE LIKES/DISLIKES NOS PALPITES
+-- PASSO 4: Criar tabela PALPITES_REACTIONS
 -- =====================================================
 
 CREATE TABLE IF NOT EXISTS palpites_reactions (
@@ -161,7 +116,7 @@ CREATE INDEX IF NOT EXISTS idx_reactions_user_id ON palpites_reactions (user_id)
 CREATE INDEX IF NOT EXISTS idx_reactions_tipo ON palpites_reactions (tipo);
 
 -- =====================================================
--- TABELA DE LIKES/DISLIKES NOS COMENTÁRIOS
+-- PASSO 5: Criar tabela COMENTARIOS_REACTIONS
 -- =====================================================
 
 CREATE TABLE IF NOT EXISTS comentarios_reactions (
@@ -193,10 +148,10 @@ CREATE INDEX IF NOT EXISTS idx_comentarios_reactions_user_id ON comentarios_reac
 CREATE INDEX IF NOT EXISTS idx_comentarios_reactions_tipo ON comentarios_reactions (tipo);
 
 -- =====================================================
--- VIEWS ÚTEIS PARA FACILITAR CONSULTAS
+-- PASSO 6: Criar VIEWS
 -- =====================================================
 
--- View: Palpites com contadores de likes, dislikes e comentários
+-- View: Palpites com estatísticas
 CREATE OR REPLACE VIEW palpites_stats AS
 SELECT 
     p.id,
@@ -231,7 +186,7 @@ LEFT JOIN (
     GROUP BY palpite_id
 ) comments ON p.id = comments.palpite_id;
 
--- View: Comentários com contadores de likes e dislikes
+-- View: Comentários com estatísticas
 CREATE OR REPLACE VIEW comentarios_stats AS
 SELECT 
     c.id,
@@ -260,7 +215,7 @@ LEFT JOIN (
 ) dislikes ON c.id = dislikes.comentario_id;
 
 -- =====================================================
--- FUNÇÕES PARA TOGGLE DE REAÇÕES
+-- PASSO 7: Criar FUNÇÕES
 -- =====================================================
 
 -- Função para toggle de reação em palpite
@@ -356,24 +311,32 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- =====================================================
--- EXEMPLOS DE USO
+-- VERIFICAÇÃO FINAL
 -- =====================================================
 
--- 1. Inserir um comentário
--- INSERT INTO comentarios (palpite_id, user_id, texto) 
--- VALUES (1, 1, 'Ótimo palpite!');
+-- Verificar tabelas criadas
+SELECT 
+    tablename,
+    'Criada com sucesso' as status
+FROM pg_tables 
+WHERE schemaname = 'public' 
+AND tablename IN ('palpites', 'comentarios', 'palpites_reactions', 'comentarios_reactions')
+ORDER BY tablename;
 
--- 2. Dar like em um palpite
--- SELECT * FROM toggle_palpite_reaction(1, 1, 'like');
+-- Verificar views criadas
+SELECT 
+    viewname,
+    'Criada com sucesso' as status
+FROM pg_views 
+WHERE schemaname = 'public' 
+AND viewname IN ('palpites_stats', 'comentarios_stats')
+ORDER BY viewname;
 
--- 3. Dar like em um comentário
--- SELECT * FROM toggle_comentario_reaction(1, 1, 'like');
-
--- 4. Buscar palpites com estatísticas
--- SELECT * FROM palpites_stats ORDER BY created_at DESC;
-
--- 5. Buscar comentários de um palpite com estatísticas
--- SELECT * FROM comentarios_stats WHERE palpite_id = 1 ORDER BY created_at DESC;
-
--- 6. Verificar se usuário já reagiu a um palpite
--- SELECT tipo FROM palpites_reactions WHERE palpite_id = 1 AND user_id = 1;
+-- Verificar funções criadas
+SELECT 
+    routine_name,
+    'Criada com sucesso' as status
+FROM information_schema.routines 
+WHERE routine_schema = 'public' 
+AND routine_name IN ('toggle_palpite_reaction', 'toggle_comentario_reaction')
+ORDER BY routine_name;

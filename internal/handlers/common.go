@@ -21,6 +21,13 @@ func sendSuccessResponse(w http.ResponseWriter, data interface{}) {
 	json.NewEncoder(w).Encode(data)
 }
 
+// sendJSONResponse envia uma resposta JSON com status code customizado
+func sendJSONResponse(w http.ResponseWriter, data interface{}, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(data)
+}
+
 func userExists(field, value string) bool {
 	var count int
 	allowedFields := map[string]bool{
