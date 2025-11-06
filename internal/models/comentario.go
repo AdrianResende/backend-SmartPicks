@@ -25,6 +25,7 @@ type ComentarioStats struct {
 	AutorNome     string    `json:"autor_nome"`
 	AutorAvatar   *string   `json:"autor_avatar,omitempty"`
 	UserReaction  *string   `json:"user_reaction,omitempty"` // 'like', 'dislike' ou null
+	PalpiteLink   *string   `json:"palpite_link,omitempty"`  // Link do palpite
 }
 
 // ComentarioRequest representa a requisição para criar/atualizar um comentário

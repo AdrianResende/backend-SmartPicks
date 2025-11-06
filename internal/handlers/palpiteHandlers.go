@@ -27,9 +27,29 @@ func GetPalpites(w http.ResponseWriter, r *http.Request) {
 			p.link, 
 			p.created_at, 
 			p.updated_at,
-			u.avatar
+			u.avatar,
+			COALESCE(likes.count, 0) AS total_likes,
+			COALESCE(dislikes.count, 0) AS total_dislikes,
+			COALESCE(comments.count, 0) AS total_comentarios
 		FROM palpites p
 		JOIN users u ON u.id = p.user_id
+		LEFT JOIN (
+			SELECT palpite_id, COUNT(*) as count 
+			FROM palpites_reactions 
+			WHERE tipo = 'like' 
+			GROUP BY palpite_id
+		) likes ON p.id = likes.palpite_id
+		LEFT JOIN (
+			SELECT palpite_id, COUNT(*) as count 
+			FROM palpites_reactions 
+			WHERE tipo = 'dislike' 
+			GROUP BY palpite_id
+		) dislikes ON p.id = dislikes.palpite_id
+		LEFT JOIN (
+			SELECT palpite_id, COUNT(*) as count 
+			FROM comentarios 
+			GROUP BY palpite_id
+		) comments ON p.id = comments.palpite_id
 		ORDER BY p.created_at DESC
 	`)
 	if err != nil {
@@ -42,10 +62,12 @@ func GetPalpites(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var p models.Palpite
 		var avatar *string
+		var totalLikes, totalDislikes, totalComentarios int
 
 		if err := rows.Scan(
 			&p.ID, &p.UserID, &p.Titulo, &p.ImgURL, &p.Link, &p.CreatedAt, &p.UpdatedAt,
 			&avatar,
+			&totalLikes, &totalDislikes, &totalComentarios,
 		); err != nil {
 			sendErrorResponse(w, "Erro ao ler palpite: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -60,12 +82,87 @@ func GetPalpites(w http.ResponseWriter, r *http.Request) {
 
 		p.Avatar = avatar
 
-		palpites = append(palpites, p.ToResponse())
+		response := p.ToResponse()
+		response.TotalLikes = totalLikes
+		response.TotalDislikes = totalDislikes
+		response.TotalComentarios = totalComentarios
+
+		comentarios, err := getComentariosByPalpiteID(p.ID)
+		if err != nil {
+			sendErrorResponse(w, "Erro ao buscar comentários: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		response.Comentarios = comentarios
+
+		palpites = append(palpites, response)
 	}
 
 	sendSuccessResponse(w, map[string]interface{}{
 		"palpites": palpites,
 	})
+}
+
+// Helper function para buscar comentários de um palpite
+func getComentariosByPalpiteID(palpiteID int) ([]models.ComentarioStats, error) {
+	rows, err := database.DB.Query(`
+		SELECT 
+			c.id,
+			c.palpite_id,
+			c.user_id,
+			c.texto,
+			c.created_at,
+			c.updated_at,
+			COALESCE(likes.count, 0) AS total_likes,
+			COALESCE(dislikes.count, 0) AS total_dislikes,
+			u.nome AS autor_nome,
+			u.avatar AS autor_avatar,
+			p.link AS palpite_link
+		FROM comentarios c
+		JOIN users u ON c.user_id = u.id
+		JOIN palpites p ON c.palpite_id = p.id
+		LEFT JOIN (
+			SELECT comentario_id, COUNT(*) as count 
+			FROM comentarios_reactions 
+			WHERE tipo = 'like' 
+			GROUP BY comentario_id
+		) likes ON c.id = likes.comentario_id
+		LEFT JOIN (
+			SELECT comentario_id, COUNT(*) as count 
+			FROM comentarios_reactions 
+			WHERE tipo = 'dislike' 
+			GROUP BY comentario_id
+		) dislikes ON c.id = dislikes.comentario_id
+		WHERE c.palpite_id = $1
+		ORDER BY c.created_at ASC
+	`, palpiteID)
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var comentarios []models.ComentarioStats
+	for rows.Next() {
+		var c models.ComentarioStats
+		if err := rows.Scan(
+			&c.ID,
+			&c.PalpiteID,
+			&c.UserID,
+			&c.Texto,
+			&c.CreatedAt,
+			&c.UpdatedAt,
+			&c.TotalLikes,
+			&c.TotalDislikes,
+			&c.AutorNome,
+			&c.AutorAvatar,
+			&c.PalpiteLink,
+		); err != nil {
+			return nil, err
+		}
+		comentarios = append(comentarios, c)
+	}
+
+	return comentarios, nil
 }
 
 // PostPalpite @Summary Criar um novo palpite
