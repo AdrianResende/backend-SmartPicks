@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"fmt"
 	"net/http"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gorilla/mux"
 )
 
 func GetPalpites(w http.ResponseWriter, r *http.Request) {
@@ -99,6 +102,128 @@ func GetPalpites(w http.ResponseWriter, r *http.Request) {
 
 	sendSuccessResponse(w, map[string]interface{}{
 		"palpites": palpites,
+	})
+}
+
+// GetPalpiteByID @Summary Buscar um palpite específico por ID
+// @Description Retorna um palpite específico com todas as estatísticas e comentários
+// @Tags Palpites
+// @Produce json
+// @Param id path int true "ID do palpite"
+// @Success 200 {object} models.PalpiteResponse "Palpite encontrado"
+// @Failure 404 {object} map[string]string "Palpite não encontrado"
+// @Failure 500 {object} map[string]string "Erro interno do servidor"
+// @Router /palpites/{id} [get]
+func GetPalpiteByID(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := vars["id"]
+
+	if id == "" {
+		sendErrorResponse(w, "ID do palpite é obrigatório", http.StatusBadRequest)
+		return
+	}
+
+	palpiteID, err := strconv.Atoi(id)
+	if err != nil {
+		sendErrorResponse(w, "ID do palpite inválido", http.StatusBadRequest)
+		return
+	}
+
+	row := database.DB.QueryRow(`
+		SELECT 
+			p.id,
+			p.user_id,
+			p.titulo,
+			p.img_url,
+			p.link,
+			p.created_at,
+			p.updated_at,
+			u.avatar,
+			COALESCE(likes.count, 0) AS total_likes,
+			COALESCE(dislikes.count, 0) AS total_dislikes,
+			COALESCE(comentarios.count, 0) AS total_comentarios
+		FROM palpites p
+		LEFT JOIN users u ON p.user_id = u.id
+		LEFT JOIN (
+			SELECT palpite_id, COUNT(*) as count 
+			FROM palpites_reactions 
+			WHERE tipo = 'like' 
+			GROUP BY palpite_id
+		) likes ON p.id = likes.palpite_id
+		LEFT JOIN (
+			SELECT palpite_id, COUNT(*) as count 
+			FROM palpites_reactions 
+			WHERE tipo = 'dislike' 
+			GROUP BY palpite_id
+		) dislikes ON p.id = dislikes.palpite_id
+		LEFT JOIN (
+			SELECT palpite_id, COUNT(*) as count 
+			FROM comentarios 
+			GROUP BY palpite_id
+		) comentarios ON p.id = comentarios.palpite_id
+		WHERE p.id = $1
+	`, palpiteID)
+
+	var palpite models.Palpite
+	var avatar *string
+	var totalLikes, totalDislikes, totalComentarios int
+
+	err = row.Scan(
+		&palpite.ID,
+		&palpite.UserID,
+		&palpite.Titulo,
+		&palpite.ImgURL,
+		&palpite.Link,
+		&palpite.CreatedAt,
+		&palpite.UpdatedAt,
+		&avatar,
+		&totalLikes,
+		&totalDislikes,
+		&totalComentarios,
+	)
+
+	if err == sql.ErrNoRows {
+		sendErrorResponse(w, "Palpite não encontrado", http.StatusNotFound)
+		return
+	}
+
+	if err != nil {
+		sendErrorResponse(w, "Erro ao buscar palpite: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Buscar comentários do palpite
+	comentarios, err := getComentariosByPalpiteID(palpite.ID)
+	if err != nil {
+		sendErrorResponse(w, "Erro ao buscar comentários: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Construir URL completa da imagem se for caminho S3
+	if strings.HasPrefix(palpite.ImgURL, "palpites/") {
+		bucketName := os.Getenv("AWS_BUCKET_NAME")
+		region := os.Getenv("AWS_REGION")
+		palpite.ImgURL = fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucketName, region, palpite.ImgURL)
+	}
+
+	// Construir resposta
+	response := models.PalpiteResponse{
+		ID:               palpite.ID,
+		UserID:           palpite.UserID,
+		Titulo:           palpite.Titulo,
+		ImgURL:           palpite.ImgURL,
+		Link:             palpite.Link,
+		CreatedAt:        palpite.CreatedAt,
+		UpdatedAt:        palpite.UpdatedAt,
+		Avatar:           avatar,
+		TotalLikes:       totalLikes,
+		TotalDislikes:    totalDislikes,
+		TotalComentarios: totalComentarios,
+		Comentarios:      comentarios,
+	}
+
+	sendSuccessResponse(w, map[string]interface{}{
+		"palpite": response,
 	})
 }
 
