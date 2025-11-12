@@ -16,6 +16,7 @@ type Palpite struct {
 type PalpiteResponse struct {
 	ID               int               `json:"id"`
 	UserID           int               `json:"user_id"`
+	UserName         string            `json:"user_name"`
 	Titulo           *string           `json:"titulo,omitempty"`
 	ImgURL           string            `json:"img_url"`
 	Avatar           *string           `json:"avatar,omitempty"`
@@ -40,7 +41,7 @@ type PalpiteStats struct {
 	TotalComentarios int       `json:"total_comentarios"`
 	AutorNome        string    `json:"autor_nome"`
 	AutorAvatar      *string   `json:"autor_avatar,omitempty"`
-	UserReaction     *string   `json:"user_reaction,omitempty"` // 'like', 'dislike' ou null
+	UserReaction     *string   `json:"user_reaction,omitempty"`
 }
 
 func (p *Palpite) ToResponse() PalpiteResponse {

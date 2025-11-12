@@ -24,7 +24,8 @@ func GetPalpites(w http.ResponseWriter, r *http.Request) {
 	rows, err := database.DB.Query(`
 		SELECT 
 			p.id, 
-			p.user_id, 
+			p.user_id,
+			u.nome,
 			p.titulo, 
 			p.img_url, 
 			p.link, 
@@ -64,11 +65,12 @@ func GetPalpites(w http.ResponseWriter, r *http.Request) {
 	var palpites []models.PalpiteResponse
 	for rows.Next() {
 		var p models.Palpite
+		var userName string
 		var avatar *string
 		var totalLikes, totalDislikes, totalComentarios int
 
 		if err := rows.Scan(
-			&p.ID, &p.UserID, &p.Titulo, &p.ImgURL, &p.Link, &p.CreatedAt, &p.UpdatedAt,
+			&p.ID, &p.UserID, &userName, &p.Titulo, &p.ImgURL, &p.Link, &p.CreatedAt, &p.UpdatedAt,
 			&avatar,
 			&totalLikes, &totalDislikes, &totalComentarios,
 		); err != nil {
@@ -86,6 +88,7 @@ func GetPalpites(w http.ResponseWriter, r *http.Request) {
 		p.Avatar = avatar
 
 		response := p.ToResponse()
+		response.UserName = userName
 		response.TotalLikes = totalLikes
 		response.TotalDislikes = totalDislikes
 		response.TotalComentarios = totalComentarios
@@ -102,6 +105,132 @@ func GetPalpites(w http.ResponseWriter, r *http.Request) {
 
 	sendSuccessResponse(w, map[string]interface{}{
 		"palpites": palpites,
+	})
+}
+
+// GetPalpitesByUserID @Summary Buscar todos os palpites de um usuário
+// @Description Retorna todos os palpites de um usuário específico com estatísticas e comentários
+// @Tags Palpites
+// @Produce json
+// @Param id path int true "ID do usuário"
+// @Success 200 {object} map[string]interface{} "Lista de palpites do usuário"
+// @Failure 400 {object} map[string]string "ID inválido"
+// @Failure 404 {object} map[string]string "Usuário não encontrado"
+// @Failure 500 {object} map[string]string "Erro interno do servidor"
+// @Router /users/{id}/palpites [get]
+func GetPalpitesByUserID(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	userID := vars["id"]
+
+	if userID == "" {
+		sendErrorResponse(w, "ID do usuário é obrigatório", http.StatusBadRequest)
+		return
+	}
+
+	userIDInt, err := strconv.Atoi(userID)
+	if err != nil {
+		sendErrorResponse(w, "ID do usuário inválido", http.StatusBadRequest)
+		return
+	}
+
+	var exists bool
+	err = database.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)", userIDInt).Scan(&exists)
+	if err != nil {
+		sendErrorResponse(w, "Erro ao verificar usuário: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !exists {
+		sendErrorResponse(w, "Usuário não encontrado", http.StatusNotFound)
+		return
+	}
+
+	rows, err := database.DB.Query(`
+		SELECT 
+			p.id, 
+			p.user_id,
+			u.nome,
+			p.titulo, 
+			p.img_url, 
+			p.link, 
+			p.created_at, 
+			p.updated_at,
+			u.avatar,
+			COALESCE(likes.count, 0) AS total_likes,
+			COALESCE(dislikes.count, 0) AS total_dislikes,
+			COALESCE(comments.count, 0) AS total_comentarios
+		FROM palpites p
+		JOIN users u ON u.id = p.user_id
+		LEFT JOIN (
+			SELECT palpite_id, COUNT(*) as count 
+			FROM palpites_reactions 
+			WHERE tipo = 'like' 
+			GROUP BY palpite_id
+		) likes ON p.id = likes.palpite_id
+		LEFT JOIN (
+			SELECT palpite_id, COUNT(*) as count 
+			FROM palpites_reactions 
+			WHERE tipo = 'dislike' 
+			GROUP BY palpite_id
+		) dislikes ON p.id = dislikes.palpite_id
+		LEFT JOIN (
+			SELECT palpite_id, COUNT(*) as count 
+			FROM comentarios 
+			GROUP BY palpite_id
+		) comments ON p.id = comments.palpite_id
+		WHERE p.user_id = $1
+		ORDER BY p.created_at DESC
+	`, userIDInt)
+	if err != nil {
+		sendErrorResponse(w, "Erro ao buscar palpites: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var palpites []models.PalpiteResponse
+	for rows.Next() {
+		var p models.Palpite
+		var userName string
+		var avatar *string
+		var totalLikes, totalDislikes, totalComentarios int
+
+		if err := rows.Scan(
+			&p.ID, &p.UserID, &userName, &p.Titulo, &p.ImgURL, &p.Link, &p.CreatedAt, &p.UpdatedAt,
+			&avatar,
+			&totalLikes, &totalDislikes, &totalComentarios,
+		); err != nil {
+			sendErrorResponse(w, "Erro ao ler palpite: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if !strings.HasPrefix(p.ImgURL, "http") {
+			bucketName := os.Getenv("AWS_BUCKET_NAME")
+			region := os.Getenv("AWS_REGION")
+			trimmedKey := strings.TrimPrefix(p.ImgURL, "/")
+			p.ImgURL = fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucketName, region, trimmedKey)
+		}
+
+		p.Avatar = avatar
+
+		response := p.ToResponse()
+		response.UserName = userName
+		response.TotalLikes = totalLikes
+		response.TotalDislikes = totalDislikes
+		response.TotalComentarios = totalComentarios
+
+		comentarios, err := getComentariosByPalpiteID(p.ID)
+		if err != nil {
+			sendErrorResponse(w, "Erro ao buscar comentários: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		response.Comentarios = comentarios
+
+		palpites = append(palpites, response)
+	}
+
+	sendSuccessResponse(w, map[string]interface{}{
+		"palpites": palpites,
+		"total":    len(palpites),
+		"user_id":  userIDInt,
 	})
 }
 
@@ -133,6 +262,7 @@ func GetPalpiteByID(w http.ResponseWriter, r *http.Request) {
 		SELECT 
 			p.id,
 			p.user_id,
+			u.nome,
 			p.titulo,
 			p.img_url,
 			p.link,
@@ -165,12 +295,14 @@ func GetPalpiteByID(w http.ResponseWriter, r *http.Request) {
 	`, palpiteID)
 
 	var palpite models.Palpite
+	var userName string
 	var avatar *string
 	var totalLikes, totalDislikes, totalComentarios int
 
 	err = row.Scan(
 		&palpite.ID,
 		&palpite.UserID,
+		&userName,
 		&palpite.Titulo,
 		&palpite.ImgURL,
 		&palpite.Link,
@@ -192,24 +324,22 @@ func GetPalpiteByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Buscar comentários do palpite
 	comentarios, err := getComentariosByPalpiteID(palpite.ID)
 	if err != nil {
 		sendErrorResponse(w, "Erro ao buscar comentários: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Construir URL completa da imagem se for caminho S3
 	if strings.HasPrefix(palpite.ImgURL, "palpites/") {
 		bucketName := os.Getenv("AWS_BUCKET_NAME")
 		region := os.Getenv("AWS_REGION")
 		palpite.ImgURL = fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucketName, region, palpite.ImgURL)
 	}
 
-	// Construir resposta
 	response := models.PalpiteResponse{
 		ID:               palpite.ID,
 		UserID:           palpite.UserID,
+		UserName:         userName,
 		Titulo:           palpite.Titulo,
 		ImgURL:           palpite.ImgURL,
 		Link:             palpite.Link,
@@ -227,7 +357,6 @@ func GetPalpiteByID(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Helper function para buscar comentários de um palpite
 func getComentariosByPalpiteID(palpiteID int) ([]models.ComentarioStats, error) {
 	rows, err := database.DB.Query(`
 		SELECT 
@@ -315,7 +444,6 @@ func PostPalpite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Removemos o limitador de 20MB
 	if err := r.ParseMultipartForm(0); err != nil {
 		sendErrorResponse(w, "Erro ao processar multipart form: "+err.Error(), http.StatusBadRequest)
 		return
