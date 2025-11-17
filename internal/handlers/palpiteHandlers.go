@@ -108,6 +108,117 @@ func GetPalpites(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetPalpitesByTitulo @Summary Buscar palpites pelo título
+// @Description Retorna lista de palpites cujo título contém o termo informado (case-insensitive)
+// @Tags Palpites
+// @Produce json
+// @Param q query string true "Termo de busca no título"
+// @Success 200 {object} map[string]interface{} "Lista de palpites encontrados"
+// @Failure 400 {object} map[string]string "Parâmetro de busca ausente"
+// @Failure 500 {object} map[string]string "Erro interno"
+// @Router /palpites/search [get]
+func GetPalpitesByTitulo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		sendErrorResponse(w, "Método não permitido", http.StatusMethodNotAllowed)
+		return
+	}
+
+	termo := strings.TrimSpace(r.URL.Query().Get("q"))
+	if termo == "" {
+		sendErrorResponse(w, "Parâmetro q (termo de busca) é obrigatório", http.StatusBadRequest)
+		return
+	}
+
+	// Usamos ILIKE para busca case-insensitive em Postgres
+	rows, err := database.DB.Query(`
+		SELECT 
+			p.id,
+			p.user_id,
+			u.nome,
+			p.titulo,
+			p.img_url,
+			p.link,
+			p.created_at,
+			p.updated_at,
+			u.avatar,
+			COALESCE(likes.count, 0) AS total_likes,
+			COALESCE(dislikes.count, 0) AS total_dislikes,
+			COALESCE(comments.count, 0) AS total_comentarios
+		FROM palpites p
+		JOIN users u ON u.id = p.user_id
+		LEFT JOIN (
+			SELECT palpite_id, COUNT(*) as count
+			FROM palpites_reactions
+			WHERE tipo = 'like'
+			GROUP BY palpite_id
+		) likes ON p.id = likes.palpite_id
+		LEFT JOIN (
+			SELECT palpite_id, COUNT(*) as count
+			FROM palpites_reactions
+			WHERE tipo = 'dislike'
+			GROUP BY palpite_id
+		) dislikes ON p.id = dislikes.palpite_id
+		LEFT JOIN (
+			SELECT palpite_id, COUNT(*) as count
+			FROM comentarios
+			GROUP BY palpite_id
+		) comments ON p.id = comments.palpite_id
+		WHERE p.titulo ILIKE '%' || $1 || '%'
+		ORDER BY p.created_at DESC
+	`, termo)
+	if err != nil {
+		sendErrorResponse(w, "Erro ao buscar palpites: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var resultados []models.PalpiteResponse
+	for rows.Next() {
+		var p models.Palpite
+		var userName string
+		var avatar *string
+		var totalLikes, totalDislikes, totalComentarios int
+
+		if err := rows.Scan(
+			&p.ID, &p.UserID, &userName, &p.Titulo, &p.ImgURL, &p.Link, &p.CreatedAt, &p.UpdatedAt,
+			&avatar,
+			&totalLikes, &totalDislikes, &totalComentarios,
+		); err != nil {
+			sendErrorResponse(w, "Erro ao ler palpite: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if !strings.HasPrefix(p.ImgURL, "http") {
+			bucketName := os.Getenv("AWS_BUCKET_NAME")
+			region := os.Getenv("AWS_REGION")
+			trimmedKey := strings.TrimPrefix(p.ImgURL, "/")
+			p.ImgURL = fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucketName, region, trimmedKey)
+		}
+
+		p.Avatar = avatar
+		resp := p.ToResponse()
+		resp.UserName = userName
+		resp.TotalLikes = totalLikes
+		resp.TotalDislikes = totalDislikes
+		resp.TotalComentarios = totalComentarios
+
+		comentarios, err := getComentariosByPalpiteID(p.ID)
+		if err != nil {
+			sendErrorResponse(w, "Erro ao buscar comentários: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		resp.Comentarios = comentarios
+
+		resultados = append(resultados, resp)
+	}
+
+	sendSuccessResponse(w, map[string]interface{}{
+		"palpites": resultados,
+		"total":    len(resultados),
+		"query":    termo,
+	})
+}
+
 // GetPalpitesByUserID @Summary Buscar todos os palpites de um usuário
 // @Description Retorna todos os palpites de um usuário específico com estatísticas e comentários
 // @Tags Palpites
@@ -354,6 +465,103 @@ func GetPalpiteByID(w http.ResponseWriter, r *http.Request) {
 
 	sendSuccessResponse(w, map[string]interface{}{
 		"palpite": response,
+	})
+}
+
+// GetPalpitesSearchParam @Summary Buscar palpites pelo título (path param)
+// @Description Retorna palpites cujo título contém o termo informado via path (case-insensitive)
+// @Tags Palpites
+// @Produce json
+// @Param termo path string true "Termo de busca"
+// @Success 200 {object} map[string]interface{} "Lista de palpites"
+// @Failure 400 {object} map[string]string "Termo inválido"
+// @Failure 500 {object} map[string]string "Erro interno"
+// @Router /palpites/search/{termo} [get]
+func GetPalpitesSearchParam(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	termo := strings.TrimSpace(vars["termo"])
+	if termo == "" {
+		sendErrorResponse(w, "Termo de busca vazio", http.StatusBadRequest)
+		return
+	}
+
+	rows, err := database.DB.Query(`
+		SELECT 
+			p.id,
+			p.user_id,
+			u.nome,
+			p.titulo,
+			p.img_url,
+			p.link,
+			p.created_at,
+			p.updated_at,
+			u.avatar,
+			COALESCE(likes.count, 0) AS total_likes,
+			COALESCE(dislikes.count, 0) AS total_dislikes,
+			COALESCE(comments.count, 0) AS total_comentarios
+		FROM palpites p
+		JOIN users u ON u.id = p.user_id
+		LEFT JOIN (
+			SELECT palpite_id, COUNT(*) as count FROM palpites_reactions WHERE tipo = 'like' GROUP BY palpite_id
+		) likes ON p.id = likes.palpite_id
+		LEFT JOIN (
+			SELECT palpite_id, COUNT(*) as count FROM palpites_reactions WHERE tipo = 'dislike' GROUP BY palpite_id
+		) dislikes ON p.id = dislikes.palpite_id
+		LEFT JOIN (
+			SELECT palpite_id, COUNT(*) as count FROM comentarios GROUP BY palpite_id
+		) comments ON p.id = comments.palpite_id
+		WHERE p.titulo ILIKE '%' || $1 || '%'
+		ORDER BY p.created_at DESC
+	`, termo)
+	if err != nil {
+		sendErrorResponse(w, "Erro ao buscar palpites: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var palpites []models.PalpiteResponse
+	for rows.Next() {
+		var p models.Palpite
+		var userName string
+		var avatar *string
+		var totalLikes, totalDislikes, totalComentarios int
+
+		if err := rows.Scan(
+			&p.ID, &p.UserID, &userName, &p.Titulo, &p.ImgURL, &p.Link, &p.CreatedAt, &p.UpdatedAt,
+			&avatar,
+			&totalLikes, &totalDislikes, &totalComentarios,
+		); err != nil {
+			sendErrorResponse(w, "Erro ao ler palpite: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if !strings.HasPrefix(p.ImgURL, "http") {
+			bucketName := os.Getenv("AWS_BUCKET_NAME")
+			region := os.Getenv("AWS_REGION")
+			trimmedKey := strings.TrimPrefix(p.ImgURL, "/")
+			p.ImgURL = fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucketName, region, trimmedKey)
+		}
+
+		p.Avatar = avatar
+		resp := p.ToResponse()
+		resp.UserName = userName
+		resp.TotalLikes = totalLikes
+		resp.TotalDislikes = totalDislikes
+		resp.TotalComentarios = totalComentarios
+
+		comentarios, err := getComentariosByPalpiteID(p.ID)
+		if err != nil {
+			sendErrorResponse(w, "Erro ao buscar comentários: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		resp.Comentarios = comentarios
+		palpites = append(palpites, resp)
+	}
+
+	sendSuccessResponse(w, map[string]interface{}{
+		"palpites": palpites,
+		"total":    len(palpites),
+		"termo":    termo,
 	})
 }
 

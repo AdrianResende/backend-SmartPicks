@@ -54,6 +54,8 @@ func RegisterRoutes(r *mux.Router) {
 	api.HandleFunc("/palpites/{id}/stats", handlers.GetPalpiteStats).Methods("GET", "OPTIONS")
 	api.HandleFunc("/palpites/{id}/react", handlers.TogglePalpiteReaction).Methods("POST", "OPTIONS")
 	api.HandleFunc("/palpites/{id}/comentarios", handlers.GetComentariosByPalpite).Methods("GET", "OPTIONS")
+	api.HandleFunc("/palpites/search", handlers.GetPalpitesByTitulo).Methods("GET", "OPTIONS")
+	api.HandleFunc("/palpites/search/{termo}", handlers.GetPalpitesSearchParam).Methods("GET", "OPTIONS")
 	api.HandleFunc("/palpites/{id}", handlers.GetPalpiteByID).Methods("GET", "OPTIONS")
 	api.HandleFunc("/palpites", handlers.GetPalpites).Methods("GET", "OPTIONS")
 	api.HandleFunc("/palpites", handlers.PostPalpite).Methods("POST", "OPTIONS")
